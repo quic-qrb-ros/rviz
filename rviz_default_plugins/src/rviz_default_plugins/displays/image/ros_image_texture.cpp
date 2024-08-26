@@ -326,6 +326,54 @@ static void imageConvertYUV422_YUY2ToRGB(
   }
 }
 
+// Function converts src_img from nv12 format to rgb
+static void imageConvertNV12ToRGB(
+  uint8_t * dst_img, uint8_t * src_img,
+  int dst_start_row, int dst_end_row,
+  int dst_num_cols, uint32_t stride_in_bytes)
+{
+  int y = 0;
+  int u = 0;
+  int v = 0;
+  int r = 0;
+  int b = 0;
+  int g = 0;
+
+  uint32_t uv_offset = (dst_end_row - dst_start_row) * stride_in_bytes;
+  uint32_t u_offset = 0;
+
+  // rows in dst_img
+  for (int row = dst_start_row; row < dst_end_row; row++) {
+    // iteration cols in dst_img
+    for (int col = 0; col < dst_num_cols; col++) {
+      y = src_img[row * stride_in_bytes + col];
+
+      u_offset = (int(row / 2) * stride_in_bytes) + int(col / 2) * 2;
+      u = src_img[uv_offset + u_offset];
+      v = src_img[uv_offset + u_offset + 1];
+
+      // Values generated based on this formula
+      // for converting YUV to RGB
+      // R = Y + 1.403V'
+      // G = Y + 0.344U' - 0.714V'
+      // B = Y + 1.770U'
+
+      v -= 128;
+      u -= 128;
+
+      r = y + (1403 * v) / 1000;
+      g = y + (344 * u - 714 * v) / 1000;
+      b = y + (1770 * u) / 1000;
+
+      // pixel value must fit in a uint8_t
+      dst_img[0] = ((r & 0xFFFFFF00) == 0) ? r : (r < 0) ? 0 : 0xFF;
+      dst_img[1] = ((g & 0xFFFFFF00) == 0) ? g : (g < 0) ? 0 : 0xFF;
+      dst_img[2] = ((b & 0xFFFFFF00) == 0) ? b : (b < 0) ? 0 : 0xFF;
+      dst_img += 3;
+    }
+  }
+}
+
 ImageData::ImageData(
   Ogre::PixelFormat pixformat,
   const uint8_t * data_ptr,
@@ -439,6 +487,20 @@ ROSImageTexture::convertYUV422_YUY2ToRGBData(const uint8_t * data_ptr, size_t da
 }
 
 ImageData
+ROSImageTexture::convertNV12ToRGBData(const uint8_t * data_ptr, size_t data_size_in_bytes)
+{
+  size_t new_size_in_bytes = data_size_in_bytes * 2;
+
+  uint8_t * new_data = new uint8_t[new_size_in_bytes];
+
+  imageConvertNV12ToRGB(
+    new_data, const_cast<uint8_t *>(data_ptr),
+    0, height_, width_, stride_);
+
+  return ImageData(Ogre::PF_BYTE_RGB, new_data, new_size_in_bytes, true);
+}
+
+ImageData
 ROSImageTexture::setFormatAndNormalizeDataIfNecessary(
   const std::string & encoding, const uint8_t * data_ptr, size_t data_size_in_bytes)
 {
@@ -478,6 +540,8 @@ ROSImageTexture::setFormatAndNormalizeDataIfNecessary(
     return convertYUV422ToRGBData(data_ptr, data_size_in_bytes);
   } else if (encoding == sensor_msgs::image_encodings::YUV422_YUY2) {
     return convertYUV422_YUY2ToRGBData(data_ptr, data_size_in_bytes);
+  } else if (encoding == "nv12") {
+    return convertNV12ToRGBData(data_ptr, data_size_in_bytes);
   } else {
     throw UnsupportedImageEncoding(encoding);
   }
